@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { jetBrainsMono } from "@/lib/fonts";
 
 type RankingResponse = {
   app: {
@@ -369,6 +370,28 @@ export function RankAtlas() {
             </div>
           </section>
         ) : null}
+      </div>
+
+      <div className="fixed bottom-3 right-3 z-30 sm:bottom-4 sm:right-4">
+        <a
+          href="https://apps.apple.com/us/app/remodex-remote-ai-coding/id6760243963"
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-2 rounded-2xl border bg-background/92 px-3 py-2 shadow-sm backdrop-blur transition-colors hover:bg-muted/70"
+        >
+          <Image
+            src="/remodex-icon.png"
+            alt="Remodex icon"
+            width={20}
+            height={20}
+            className="h-5 w-5 rounded-lg"
+          />
+          <span
+            className={`${jetBrainsMono.className} text-[10px] font-medium tracking-[0.04em] text-muted-foreground sm:text-[11px]`}
+          >
+            Made with Remodex
+          </span>
+        </a>
       </div>
     </main>
   );
