@@ -7,7 +7,7 @@
 // Depends on: /api/rankings, shadcn/ui primitives
 
 import Image from "next/image";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useEffectEvent, useRef, useState } from "react";
 import { ArrowUpRight, Clock3, Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -70,6 +70,12 @@ export function RankAtlas() {
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [isSearchPopoverOpen, setIsSearchPopoverOpen] = useState(false);
   const searchAreaRef = useRef<HTMLDivElement | null>(null);
+  const hasLoadedSharedQueryRef = useRef(false);
+
+  const handleSharedQuery = useEffectEvent((sharedQuery: string) => {
+    setQuery(sharedQuery);
+    void handleSubmit(undefined, sharedQuery);
+  });
 
   useEffect(() => {
     try {
@@ -100,6 +106,22 @@ export function RankAtlas() {
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, []);
 
+  useEffect(() => {
+    if (hasLoadedSharedQueryRef.current) {
+      return;
+    }
+
+    hasLoadedSharedQueryRef.current = true;
+
+    const sharedQuery = readSharedAppQuery();
+
+    if (!sharedQuery) {
+      return;
+    }
+
+    handleSharedQuery(sharedQuery);
+  }, []);
+
   async function handleSubmit(event?: FormEvent<HTMLFormElement>, nextQuery?: string) {
     event?.preventDefault();
 
@@ -113,7 +135,6 @@ export function RankAtlas() {
     setIsLoading(true);
     setError(null);
     setIsSearchPopoverOpen(false);
-    setRecentSearches((current) => saveRecentSearches(candidate, current));
 
     try {
       const response = await fetch(`/api/rankings?app=${encodeURIComponent(candidate)}`);
@@ -124,9 +145,13 @@ export function RankAtlas() {
         throw new Error(message ?? "Unable to fetch rankings right now.");
       }
 
+      const resolvedQuery = payload.app.trackName.trim();
+
       setData(payload);
-      setQuery(candidate);
+      setQuery(resolvedQuery);
       setCountryQuery("");
+      setRecentSearches((current) => saveRecentSearches(resolvedQuery, current));
+      syncSharedAppQuery(resolvedQuery);
     } catch (requestError) {
       setData(null);
       setError(requestError instanceof Error ? requestError.message : "Unable to fetch rankings right now.");
@@ -621,4 +646,28 @@ function saveRecentSearches(candidate: string, current: string[]) {
   }
 
   return nextValue;
+}
+
+function readSharedAppQuery() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return new URLSearchParams(window.location.search).get("app")?.trim() ?? "";
+}
+
+function syncSharedAppQuery(appName: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+
+  if (appName) {
+    url.searchParams.set("app", appName);
+  } else {
+    url.searchParams.delete("app");
+  }
+
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
 }
