@@ -1,5 +1,11 @@
 "use client"
 
+// FILE: button.tsx
+// Purpose: Provides the stock shadcn button primitive and its shared variants.
+// Layer: UI primitive
+// Exports: Button, buttonVariants
+// Depends on: @base-ui/react/button, class-variance-authority, cn
+
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
 

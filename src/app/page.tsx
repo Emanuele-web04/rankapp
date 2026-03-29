@@ -1,5 +1,5 @@
 // FILE: page.tsx
-// Purpose: Serves the single-page Rank Atlas experience.
+// Purpose: Serves the single-page RankApp experience.
 // Layer: App Router page
 // Exports: Home
 // Depends on: src/components/rank-atlas.tsx

@@ -1,12 +1,20 @@
 "use client";
 
 // FILE: rank-atlas.tsx
-// Purpose: Renders the search flow and responsive results interface for storefront ranking data.
+// Purpose: Renders the search flow and ranking results using stock shadcn primitives.
 // Layer: Client component
 // Exports: RankAtlas
-// Depends on: /api/rankings
+// Depends on: /api/rankings, shadcn/ui primitives
 
-import { FormEvent, useState } from "react";
+import Image from "next/image";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { ArrowUpRight, Clock3, Search } from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type RankingResponse = {
   app: {
@@ -44,24 +52,53 @@ type RankingResponse = {
     countryName: string;
   }>;
   generatedAt: string;
-  sourceNote: string;
 };
 
-const EXAMPLES = [
-  "Instagram",
-  "ChatGPT",
-  "CapCut",
-  "https://apps.apple.com/us/app/instagram/id389801252",
-];
+const EXAMPLES = ["ChatGPT", "Remodex"];
+const RECENT_SEARCHES_KEY = "rank-atlas-recent-searches";
+const MAX_RECENT_SEARCHES = 5;
 
 // ─── ENTRY POINT ─────────────────────────────────────────────
 
-// Hosts the ranking query form and swaps between idle, loading, error, and loaded states.
+// Hosts the search form and switches between loading, error, and result states.
 export function RankAtlas() {
-  const [query, setQuery] = useState("Instagram");
+  const [query, setQuery] = useState("");
+  const [countryQuery, setCountryQuery] = useState("");
   const [data, setData] = useState<RankingResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [isSearchPopoverOpen, setIsSearchPopoverOpen] = useState(false);
+  const searchAreaRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    try {
+      const storedValue = window.localStorage.getItem(RECENT_SEARCHES_KEY);
+
+      if (!storedValue) {
+        return;
+      }
+
+      const parsed = JSON.parse(storedValue) as unknown;
+
+      if (Array.isArray(parsed)) {
+        setRecentSearches(parsed.filter((item): item is string => typeof item === "string").slice(0, MAX_RECENT_SEARCHES));
+      }
+    } catch {
+      window.localStorage.removeItem(RECENT_SEARCHES_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (!searchAreaRef.current?.contains(event.target as Node)) {
+        setIsSearchPopoverOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, []);
 
   async function handleSubmit(event?: FormEvent<HTMLFormElement>, nextQuery?: string) {
     event?.preventDefault();
@@ -75,17 +112,21 @@ export function RankAtlas() {
 
     setIsLoading(true);
     setError(null);
+    setIsSearchPopoverOpen(false);
+    setRecentSearches((current) => saveRecentSearches(candidate, current));
 
     try {
       const response = await fetch(`/api/rankings?app=${encodeURIComponent(candidate)}`);
       const payload = (await response.json()) as RankingResponse | { error?: string };
 
       if (!response.ok || !("app" in payload)) {
-        throw new Error(payload.error ?? "Unable to fetch rankings right now.");
+        const message = "error" in payload ? payload.error : undefined;
+        throw new Error(message ?? "Unable to fetch rankings right now.");
       }
 
       setData(payload);
       setQuery(candidate);
+      setCountryQuery("");
     } catch (requestError) {
       setData(null);
       setError(requestError instanceof Error ? requestError.message : "Unable to fetch rankings right now.");
@@ -94,103 +135,176 @@ export function RankAtlas() {
     }
   }
 
+  const normalizedCountryQuery = countryQuery.trim().toLowerCase();
+  const filteredRankings = data
+    ? data.rankings.filter((entry) => matchesCountryQuery(entry.countryName, entry.countryCode, normalizedCountryQuery))
+    : [];
+  const filteredUnranked = data
+    ? data.unranked.filter((entry) => matchesCountryQuery(entry.countryName, entry.countryCode, normalizedCountryQuery))
+    : [];
+
   return (
-    <main className="min-h-screen overflow-x-hidden bg-[var(--surface-0)] text-[var(--text-strong)]">
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="hero-orb hero-orb-left" />
-        <div className="hero-orb hero-orb-right" />
-        <div className="grid-haze" />
-      </div>
-
-      <div className="relative mx-auto flex w-full max-w-7xl flex-col px-4 pb-16 pt-6 sm:px-6 lg:px-8">
-        <header className="reveal border-b border-white/10 pb-8">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-2xl space-y-4">
-              <span className="inline-flex items-center gap-2 text-[0.68rem] font-medium uppercase tracking-[0.32em] text-[var(--text-muted)]">
-                Rank Atlas
-              </span>
-              <h1 className="max-w-4xl text-4xl font-semibold tracking-[-0.04em] text-balance text-white sm:text-5xl lg:text-6xl">
-                Find an app&apos;s category rank across Apple storefronts.
-              </h1>
-              <p className="max-w-xl text-sm leading-6 text-[var(--text-soft)] sm:text-base">
-                Search by name, App Store URL, app id, or bundle id. Results are sorted from best rank to lowest
-                detected chart position.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-3 text-sm text-[var(--text-muted)] sm:items-end">
-              <span>All Apple-supported storefronts</span>
-              <span>Category charts from Apple&apos;s public Top 100 feeds</span>
-            </div>
+    <main className="min-h-screen bg-background">
+      <div className="mx-auto flex w-full max-w-6xl flex-col px-3 py-5 sm:px-6 sm:py-8 lg:px-8">
+        <header className="animate-in fade-in slide-in-from-bottom-2 duration-500 border-b pb-6 sm:pb-8">
+          <div className="max-w-3xl space-y-4">
+            <Badge variant="outline" className="rounded-full px-3 py-1 text-[11px] tracking-[0.18em] uppercase">
+              RankApp
+            </Badge>
+            <h1 className="max-w-3xl text-3xl font-semibold tracking-tight text-balance sm:text-5xl">
+              Check an app&apos;s category ranking across countries.
+            </h1>
+            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+              Search by app name, App Store URL, app id, or bundle id. Results are ordered from strongest rank to
+              lowest visible chart position.
+            </p>
           </div>
         </header>
 
-        <section className="reveal mt-8 grid gap-8 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
-          <form
-            onSubmit={(event) => void handleSubmit(event)}
-            className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.05] p-5 backdrop-blur-xl sm:p-7"
-          >
-            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--accent)] to-transparent" />
-            <div className="flex flex-col gap-4">
-              <label htmlFor="app-query" className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--text-muted)]">
-                Search input
-              </label>
-
-              <div className="flex flex-col gap-3 xl:flex-row">
-                <input
-                  id="app-query"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Instagram, com.openai.chat, or an App Store URL"
-                  className="min-h-14 flex-1 rounded-full border border-white/12 bg-black/30 px-5 text-base text-white outline-none transition focus:border-[var(--accent)] focus:bg-black/40"
-                />
-
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="min-h-14 rounded-full bg-[var(--accent)] px-6 text-sm font-medium tracking-[0.18em] text-[var(--surface-0)] uppercase transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-70"
-                >
-                  {isLoading ? "Scanning..." : "Run ranking"}
-                </button>
+        <section className="animate-in fade-in slide-in-from-bottom-2 mt-6 duration-500 sm:mt-8">
+          <form onSubmit={(event) => void handleSubmit(event)} className="rounded-3xl border bg-card p-4 shadow-sm sm:p-6">
+            <div className="space-y-3 sm:space-y-4">
+              <div className="space-y-1.5">
+                  <label htmlFor="app-query" className="text-sm font-medium">
+                    App lookup
+                  </label>
+                  <p className="text-sm text-muted-foreground">
+                    Enter one app and compare its primary category globally.
+                  </p>
+                  <p className="max-w-2xl text-xs leading-5 text-muted-foreground sm:text-sm sm:leading-6">
+                    Uses Apple&apos;s public Top 100 category feeds. Countries without a visible rank appear below.
+                  </p>
               </div>
 
-              <div className="flex flex-wrap gap-2 pt-1">
-                {EXAMPLES.map((example) => (
-                  <button
-                    key={example}
-                    type="button"
-                    onClick={() => {
-                      setQuery(example);
-                      void handleSubmit(undefined, example);
-                    }}
-                    className="rounded-full border border-white/10 px-3 py-2 text-xs tracking-[0.18em] text-[var(--text-soft)] uppercase transition hover:border-[var(--accent)] hover:text-white"
-                  >
-                    {example}
-                  </button>
-                ))}
+              <div ref={searchAreaRef} className="flex flex-col gap-3 sm:flex-row">
+                <div className="relative flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="app-query"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    onFocus={() => setIsSearchPopoverOpen(true)}
+                    onClick={() => setIsSearchPopoverOpen(true)}
+                    placeholder="Instagram, com.openai.chat, or an App Store URL"
+                    className="h-12 pl-9 text-base sm:h-11"
+                  />
+
+                  {isSearchPopoverOpen && (recentSearches.length > 0 || EXAMPLES.length > 0) ? (
+                    <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 max-h-[55svh] overflow-y-auto rounded-2xl border bg-popover p-3 shadow-lg">
+                      {recentSearches.length > 0 ? (
+                        <div className="space-y-2">
+                          <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                            Recent research
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {recentSearches.map((recentSearch) => (
+                              <Button
+                                key={recentSearch}
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                className="rounded-full"
+                                onClick={() => {
+                                  setQuery(recentSearch);
+                                  void handleSubmit(undefined, recentSearch);
+                                }}
+                              >
+                                {recentSearch}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {recentSearches.length > 0 && EXAMPLES.length > 0 ? <Separator /> : null}
+
+                      {EXAMPLES.length > 0 ? (
+                        <div className="space-y-2">
+                          <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                            Starter apps
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {EXAMPLES.map((example) => (
+                              <Button
+                                key={example}
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="rounded-full"
+                                onClick={() => {
+                                  setQuery(example);
+                                  void handleSubmit(undefined, example);
+                                }}
+                              >
+                                {example}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+
+                <Button type="submit" disabled={isLoading} className="h-12 w-full sm:h-11 sm:w-auto sm:px-6">
+                  {isLoading ? "Loading..." : "Search"}
+                </Button>
               </div>
+
+              {recentSearches.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                    <Clock3 className="size-3.5" />
+                    Last 5 research
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {recentSearches.map((recentSearch) => (
+                      <Button
+                        key={recentSearch}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-9 rounded-full px-3 sm:h-auto sm:min-h-11 sm:px-4 sm:py-3"
+                        onClick={() => {
+                          setQuery(recentSearch);
+                          void handleSubmit(undefined, recentSearch);
+                        }}
+                      >
+                        {recentSearch}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                    Quick picks
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {EXAMPLES.map((example) => (
+                      <Button
+                        key={example}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="rounded-full"
+                        onClick={() => {
+                          setQuery(example);
+                          void handleSubmit(undefined, example);
+                        }}
+                      >
+                        {example}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </form>
-
-          <div className="reveal flex min-h-[14rem] flex-col justify-between rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.09),rgba(255,255,255,0.03))] p-5 sm:p-7">
-            <div>
-              <span className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--text-muted)]">
-                Coverage note
-              </span>
-              <p className="mt-4 max-w-sm text-sm leading-6 text-[var(--text-soft)]">
-                This surface uses Apple&apos;s public category feeds, so ranks are available when the app appears in a
-                storefront&apos;s Top 100 chart for its primary category.
-              </p>
-            </div>
-
-            <div className="mt-8 border-t border-white/10 pt-5 text-xs uppercase tracking-[0.22em] text-[var(--text-muted)]">
-              Search once, compare globally
-            </div>
-          </div>
         </section>
 
         {error ? (
-          <section className="reveal mt-6 rounded-[1.5rem] border border-[color:rgba(255,130,92,0.45)] bg-[color:rgba(255,130,92,0.08)] px-5 py-4 text-sm text-[color:#ffd4c8]">
+          <section className="mt-5 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive sm:mt-6">
             {error}
           </section>
         ) : null}
@@ -198,14 +312,35 @@ export function RankAtlas() {
         {isLoading ? <LoadingState /> : null}
 
         {data ? (
-          <section className="mt-10 grid gap-10 lg:grid-cols-[18rem_minmax(0,1fr)]">
-            <aside className="reveal lg:sticky lg:top-6 lg:self-start">
+          <section className="mt-6 grid gap-6 lg:mt-8 lg:grid-cols-[18rem_minmax(0,1fr)]">
+            <aside className="animate-in fade-in slide-in-from-bottom-2 duration-500 lg:sticky lg:top-6 lg:self-start">
               <AppSummary data={data} />
             </aside>
 
-            <div className="space-y-8">
-              <RankList data={data} />
-              <NoRankList data={data} />
+            <div className="space-y-6">
+              <section className="animate-in fade-in slide-in-from-bottom-2 rounded-3xl border bg-card p-4 shadow-sm sm:p-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-1">
+                    <div className="text-sm font-medium">Country filter</div>
+                    <p className="text-sm text-muted-foreground">
+                      Narrow the storefront results by country name or country code.
+                    </p>
+                  </div>
+
+                  <div className="relative w-full sm:max-w-xs">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={countryQuery}
+                      onChange={(event) => setCountryQuery(event.target.value)}
+                      placeholder="Search countries"
+                      className="h-10 rounded-full pl-9"
+                    />
+                  </div>
+                </div>
+              </section>
+
+              <RankList data={data} rankings={filteredRankings} countryQuery={countryQuery} />
+              <NoRankList data={data} unranked={filteredUnranked} countryQuery={countryQuery} />
             </div>
           </section>
         ) : null}
@@ -218,169 +353,217 @@ export function RankAtlas() {
 
 function AppSummary({ data }: { data: RankingResponse }) {
   const lastUpdatedLabel = data.app.currentVersionReleaseDate
-    ? new Intl.DateTimeFormat("en", {
-        dateStyle: "medium",
-      }).format(new Date(data.app.currentVersionReleaseDate))
+    ? new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(new Date(data.app.currentVersionReleaseDate))
     : "Unknown";
 
   return (
-    <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] p-5 sm:p-6">
-      <div className="flex items-start gap-4">
-        <img
+    <section className="rounded-3xl border bg-card p-4 shadow-sm sm:p-6">
+      <div className="space-y-3 sm:space-y-4">
+        <Image
           src={data.app.artworkUrl512}
           alt={`${data.app.trackName} icon`}
-          className="h-20 w-20 rounded-[1.5rem] object-cover shadow-[0_30px_60px_rgba(0,0,0,0.35)]"
+          width={80}
+          height={80}
+          className="h-16 w-16 rounded-[1.35rem] object-cover sm:h-20 sm:w-20 sm:rounded-[1.6rem]"
         />
 
-        <div className="min-w-0">
-          <div className="text-xs font-medium uppercase tracking-[0.22em] text-[var(--text-muted)]">Selected app</div>
-          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-white">{data.app.trackName}</h2>
-          <p className="mt-1 text-sm text-[var(--text-soft)]">{data.app.artistName}</p>
+        <div className="min-w-0 space-y-2 sm:space-y-3">
+          <Badge variant="secondary" className="rounded-full">
+            {data.chart.label}
+          </Badge>
+          <div className="space-y-2">
+            <h2 className="text-xl font-semibold tracking-tight sm:text-2xl">{data.app.trackName}</h2>
+            <p className="text-sm text-muted-foreground">{data.app.artistName}</p>
+          </div>
         </div>
       </div>
 
-      <dl className="mt-8 space-y-4 border-t border-white/10 pt-5 text-sm">
+      <Separator className="my-6" />
+
+      <dl className="space-y-4 text-sm">
         <MetaRow label="Category" value={data.chart.categoryName} />
-        <MetaRow label="Chart type" value={data.chart.label} />
         <MetaRow label="Bundle ID" value={data.app.bundleId} mono />
         <MetaRow label="Version date" value={lastUpdatedLabel} />
       </dl>
 
-      <div className="mt-8 space-y-4 border-t border-white/10 pt-5">
+      <Separator className="my-6" />
+
+      <div className="space-y-4">
         <StatLine
           label="Best detected rank"
-          value={data.stats.bestRank ? `#${data.stats.bestRank}` : "No chart position"}
-          detail={data.stats.bestCountries.join(", ") || "Not detected in Apple Top 100 feeds"}
+          value={data.stats.bestRank ? `#${data.stats.bestRank}` : "No rank found"}
+          detail={data.stats.bestCountries.join(", ") || "Not visible in the current public chart snapshot"}
         />
         <StatLine
           label="Storefront coverage"
           value={`${data.stats.rankedCount}/${data.stats.storefrontCount}`}
-          detail={`${data.stats.unrankedCount} storefronts with no chart position`}
+          detail={`${data.stats.unrankedCount} storefronts without a visible chart position`}
         />
       </div>
 
-      <a
-        href={data.app.storeUrl}
-        target="_blank"
-        rel="noreferrer"
-        className="mt-8 inline-flex items-center rounded-full border border-white/12 px-4 py-3 text-xs font-medium uppercase tracking-[0.22em] text-white transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+      <Button
+        nativeButton={false}
+        render={<a href={data.app.storeUrl} target="_blank" rel="noreferrer" />}
+        variant="outline"
+        className="mt-6 h-11 w-full justify-between"
       >
         Open App Store page
-      </a>
+        <ArrowUpRight className="size-4" />
+      </Button>
     </section>
   );
 }
 
-function RankList({ data }: { data: RankingResponse }) {
+function RankList({
+  data,
+  rankings,
+  countryQuery,
+}: {
+  data: RankingResponse;
+  rankings: RankingResponse["rankings"];
+  countryQuery: string;
+}) {
   return (
-    <section className="reveal overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.04]">
-      <header className="flex flex-col gap-3 border-b border-white/10 px-5 py-5 sm:flex-row sm:items-end sm:justify-between sm:px-6">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--text-muted)]">Detected ranks</p>
-          <h3 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-white">
+    <section className="animate-in fade-in slide-in-from-bottom-2 duration-500 rounded-3xl border bg-card shadow-sm">
+      <header className="flex flex-col gap-3 border-b px-4 py-4 sm:flex-row sm:items-end sm:justify-between sm:px-6 sm:py-5">
+        <div className="space-y-2">
+          <Badge variant="outline" className="rounded-full px-3 py-1 text-[11px] tracking-[0.18em] uppercase">
+            Rankings
+          </Badge>
+          <h3 className="text-xl font-semibold tracking-tight sm:text-2xl">
             {data.app.trackName} in {data.chart.categoryName}
           </h3>
         </div>
 
-        <p className="max-w-sm text-sm leading-6 text-[var(--text-soft)]">
-          Sorted from strongest position to lowest detected chart placement.
+        <p className="max-w-sm text-sm leading-6 text-muted-foreground">
+          Ordered from best detected country rank to lowest visible chart placement.
         </p>
       </header>
 
-      <div className="px-5 pb-2 pt-4 sm:px-6">
-        <div className="flex items-center justify-between border-b border-white/8 pb-3 text-[0.68rem] font-medium uppercase tracking-[0.28em] text-[var(--text-muted)]">
-          <span>Country</span>
-          <span>Rank</span>
-        </div>
-      </div>
-
-      <ol className="px-5 pb-4 sm:px-6">
-        {data.rankings.length > 0 ? (
-          data.rankings.map((entry, index) => (
-            <li
-              key={entry.countryCode}
-              className="rank-row reveal border-b border-white/8 last:border-b-0"
-              style={{ animationDelay: `${index * 28}ms` }}
-            >
-              <a
-                href={entry.storeUrl || data.app.storeUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center justify-between gap-4 py-4 transition hover:text-white"
+      <div className="px-4 py-4 sm:px-6 sm:py-5">
+        {rankings.length > 0 ? (
+          <ol className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {rankings.map((entry, index) => (
+              <li
+                key={entry.countryCode}
+                className="animate-in fade-in slide-in-from-bottom-1"
+                style={{ animationDelay: `${index * 24}ms` }}
               >
-                <div className="min-w-0">
-                  <div className="text-lg text-white">{entry.countryName}</div>
-                  <div className="text-xs uppercase tracking-[0.24em] text-[var(--text-muted)]">
-                    {entry.countryCode.toUpperCase()}
-                  </div>
-                </div>
+                <a
+                  href={entry.storeUrl || data.app.storeUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex h-full flex-col justify-between rounded-2xl border bg-background/70 p-3 transition-colors hover:bg-muted/40 sm:p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl leading-none">{countryCodeToFlag(entry.countryCode)}</span>
+                        <span className="text-sm font-medium leading-5 sm:text-base">{entry.countryName}</span>
+                      </div>
+                      <div className="mt-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                        {entry.countryCode.toUpperCase()}
+                      </div>
+                    </div>
 
-                <span className="text-xl font-semibold tracking-[-0.04em] text-[var(--accent)]">#{entry.rank}</span>
-              </a>
-            </li>
-          ))
+                    <Badge variant="secondary" className="shrink-0 rounded-full text-xs font-semibold sm:text-sm">
+                      #{entry.rank}
+                    </Badge>
+                  </div>
+                </a>
+              </li>
+            ))}
+          </ol>
         ) : (
-          <li className="py-8 text-sm text-[var(--text-soft)]">
-            No Top 100 category placements were detected for this app right now.
-          </li>
+          <div className="py-8 text-sm text-muted-foreground">
+            {countryQuery
+              ? "No ranked countries match the current filter."
+              : "No Top 100 category placements were detected for this app right now."}
+          </div>
         )}
-      </ol>
+      </div>
     </section>
   );
 }
 
-function NoRankList({ data }: { data: RankingResponse }) {
+function NoRankList({
+  data,
+  unranked,
+  countryQuery,
+}: {
+  data: RankingResponse;
+  unranked: RankingResponse["unranked"];
+  countryQuery: string;
+}) {
   return (
-    <section className="reveal rounded-[2rem] border border-white/10 bg-white/[0.03] p-5 sm:p-6">
-      <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.28em] text-[var(--text-muted)]">No chart position</p>
-          <h3 className="mt-2 text-xl font-semibold tracking-[-0.04em] text-white">Storefronts outside the Top 100</h3>
+    <section className="animate-in fade-in slide-in-from-bottom-2 duration-500 rounded-3xl border bg-card shadow-sm">
+      <header className="flex flex-col gap-3 border-b px-4 py-4 sm:flex-row sm:items-end sm:justify-between sm:px-6 sm:py-5">
+        <div className="space-y-2">
+          <Badge variant="outline" className="rounded-full px-3 py-1 text-[11px] tracking-[0.18em] uppercase">
+            Not ranked
+          </Badge>
+          <h3 className="text-lg font-semibold tracking-tight sm:text-xl">Storefronts outside the visible Top 100</h3>
         </div>
-        <p className="max-w-md text-sm leading-6 text-[var(--text-soft)]">
-          These storefronts did not expose a category rank for the app in Apple&apos;s public feed snapshot.
+
+        <p className="max-w-md text-sm leading-6 text-muted-foreground">
+          These storefronts did not expose a category rank in the public Apple feed snapshot.
         </p>
-      </div>
+      </header>
 
-      <div className="mt-5 grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
-        {data.unranked.map((entry) => (
-          <div key={entry.countryCode} className="flex items-center justify-between border-b border-white/8 py-2 text-sm">
-            <span className="text-[var(--text-soft)]">{entry.countryName}</span>
-            <span className="text-xs uppercase tracking-[0.24em] text-[var(--text-muted)]">
-              {entry.countryCode.toUpperCase()}
-            </span>
+      <div className="grid gap-3 px-4 py-4 sm:grid-cols-2 sm:px-6 sm:py-5 xl:grid-cols-3">
+        {unranked.length > 0 ? (
+          unranked.map((entry) => (
+          <div key={entry.countryCode} className="flex items-center justify-between rounded-2xl border bg-background/70 p-3 text-sm sm:p-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-xl leading-none">{countryCodeToFlag(entry.countryCode)}</span>
+                <span className="truncate text-foreground">{entry.countryName}</span>
+              </div>
+              <div className="mt-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                {entry.countryCode.toUpperCase()}
+              </div>
+            </div>
+
+            <Badge variant="outline" className="shrink-0 rounded-full text-xs">
+              No rank
+            </Badge>
           </div>
-        ))}
+          ))
+        ) : (
+          <div className="sm:col-span-2 xl:col-span-3 py-8 text-sm text-muted-foreground">
+            {countryQuery ? "No unranked countries match the current filter." : "All visible countries are ranked."}
+          </div>
+        )}
       </div>
 
-      <p className="mt-6 text-xs uppercase tracking-[0.22em] text-[var(--text-muted)]">
+      <div className="border-t px-5 py-4 text-xs uppercase tracking-[0.18em] text-muted-foreground sm:px-6">
         Updated {new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(data.generatedAt))}
-      </p>
+      </div>
     </section>
   );
 }
 
 function LoadingState() {
   return (
-    <section className="reveal mt-10 grid gap-10 lg:grid-cols-[18rem_minmax(0,1fr)]">
-      <div className="h-[24rem] rounded-[2rem] border border-white/10 bg-white/[0.04] p-6">
-        <div className="skeleton h-20 w-20 rounded-[1.5rem]" />
-        <div className="skeleton mt-6 h-5 w-32 rounded-full" />
-        <div className="skeleton mt-3 h-10 w-44 rounded-full" />
-        <div className="skeleton mt-8 h-px w-full rounded-full" />
-        <div className="space-y-3 pt-5">
-          <div className="skeleton h-5 w-full rounded-full" />
-          <div className="skeleton h-5 w-5/6 rounded-full" />
-          <div className="skeleton h-5 w-2/3 rounded-full" />
+    <section className="mt-6 grid gap-6 lg:mt-8 lg:grid-cols-[18rem_minmax(0,1fr)]">
+      <div className="rounded-3xl border bg-card p-4 shadow-sm sm:p-6">
+        <Skeleton className="h-16 w-16 rounded-[1.35rem] sm:h-20 sm:w-20 sm:rounded-[1.6rem]" />
+        <Skeleton className="mt-6 h-5 w-24" />
+        <Skeleton className="mt-3 h-8 w-40" />
+        <Separator className="my-6" />
+        <div className="space-y-3">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-5/6" />
+          <Skeleton className="h-4 w-2/3" />
         </div>
       </div>
 
-      <div className="rounded-[2rem] border border-white/10 bg-white/[0.04] p-6">
-        <div className="skeleton h-5 w-24 rounded-full" />
-        <div className="skeleton mt-3 h-10 w-80 rounded-full" />
+      <div className="rounded-3xl border bg-card p-4 shadow-sm sm:p-6">
+        <Skeleton className="h-5 w-24" />
+        <Skeleton className="mt-3 h-8 w-72" />
         <div className="mt-8 space-y-3">
           {Array.from({ length: 8 }).map((_, index) => (
-            <div key={index} className="skeleton h-14 w-full rounded-[1.2rem]" />
+            <Skeleton key={index} className="h-14 w-full rounded-xl" />
           ))}
         </div>
       </div>
@@ -391,8 +574,8 @@ function LoadingState() {
 function MetaRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="flex flex-col gap-1">
-      <dt className="text-xs font-medium uppercase tracking-[0.24em] text-[var(--text-muted)]">{label}</dt>
-      <dd className={mono ? "font-mono text-xs text-white sm:text-sm" : "text-sm text-white"}>{value}</dd>
+      <dt className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">{label}</dt>
+      <dd className={mono ? "font-mono text-xs sm:text-sm" : "text-sm"}>{value}</dd>
     </div>
   );
 }
@@ -400,10 +583,42 @@ function MetaRow({ label, value, mono = false }: { label: string; value: string;
 function StatLine({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
     <div className="space-y-1">
-      <div className="text-xs font-medium uppercase tracking-[0.24em] text-[var(--text-muted)]">{label}</div>
-      <div className="text-2xl font-semibold tracking-[-0.04em] text-white">{value}</div>
-      <div className="text-sm leading-6 text-[var(--text-soft)]">{detail}</div>
+      <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">{label}</div>
+      <div className="text-2xl font-semibold tracking-tight">{value}</div>
+      <div className="text-sm leading-6 text-muted-foreground">{detail}</div>
     </div>
   );
 }
 
+function countryCodeToFlag(countryCode: string) {
+  const normalized = countryCode.trim().toUpperCase();
+
+  if (!/^[A-Z]{2}$/.test(normalized)) {
+    return "🏳";
+  }
+
+  return String.fromCodePoint(...Array.from(normalized).map((char) => 127397 + char.charCodeAt(0)));
+}
+
+function matchesCountryQuery(countryName: string, countryCode: string, query: string) {
+  if (!query) {
+    return true;
+  }
+
+  return countryName.toLowerCase().includes(query) || countryCode.toLowerCase().includes(query);
+}
+
+function saveRecentSearches(candidate: string, current: string[]) {
+  const nextValue = [candidate, ...current.filter((entry) => entry.toLowerCase() !== candidate.toLowerCase())].slice(
+    0,
+    MAX_RECENT_SEARCHES,
+  );
+
+  try {
+    window.localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(nextValue));
+  } catch {
+    // Ignore storage errors so the search flow still works in restricted environments.
+  }
+
+  return nextValue;
+}

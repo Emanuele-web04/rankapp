@@ -308,7 +308,7 @@ const regionNames = new Intl.DisplayNames(["en"], { type: "region" });
 export async function getAppRankings(rawQuery: string): Promise<RankingResponse> {
   const query = rawQuery.trim();
   const cacheKey = query.toLowerCase();
-  const cached = readCache(rankingsCache, cacheKey);
+  const cached = readCache<RankingResponse>(rankingsCache, cacheKey);
 
   if (cached) {
     return cached;
@@ -633,4 +633,3 @@ function getCountryName(countryCode: string): string {
 function normalize(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
-
